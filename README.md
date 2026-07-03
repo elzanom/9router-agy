@@ -1,185 +1,226 @@
 # 9router-agy
 
-Setup dan konfigurasi **Antigravity (agy)** sebagai provider di **9router**.
+Tool CLI (Node.js) untuk **otomatisasi registrasi akun Google Antigravity ke 9router** lewat alur OAuth Google. Bisa jalan **local** (di mesin yang sama dengan 9router) atau **remote** (dari manapun, ke 9router di VPS/host lain via HTTPS).
 
-## 📋 Status Saat Ini
-
-| Item | Status |
-|------|--------|
-| 9router | ✅ Running (PID 871, port 20128, tray mode) |
-| Dashboard | http://localhost:20128 |
-| Akun Antigravity terdaftar | **17 akun** (16 aktif, 1 nonaktif) |
-| Database | `~/.9router/db/data.sqlite` |
-| API Key 9router | `<9router-api-key>-***` |
-
-## 🔑 Cara Menambah Akun Antigravity Baru
-
-### Via Dashboard (Browser)
-
-1. Buka http://localhost:20128
-2. Login menggunakan password dashboard
-3. Navigasi ke menu **Providers** atau **Connections**
-4. Pilih **Antigravity** → **Add Connection**
-5. Login via Google OAuth
-6. Akun akan muncul di daftar provider connections
-
-### Via REST API
-
-```bash
-# Login dulu untuk dapat session cookie
-curl -X POST http://localhost:20128/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"password":"YOUR_PASSWORD"}'
-
-# Lihat daftar provider connections (butuh auth)
-curl http://localhost:20128/api/provider-connections \
-  -H "Cookie: session=YOUR_SESSION"
-```
-
-## 🚀 Setup MITM Proxy (Antigravity IDE → 9router)
-
-Antigravity (Google Cloud Code IDE) menggunakan mode **MITM** (Man-in-the-Middle) untuk routing traffic ke 9router.
-
-### Cara Kerja
-
-1. 9router membuat **Root CA certificate** (untuk HTTPS interception)
-2. Menambahkan **DNS entry** di `/etc/hosts`: `daily-cloudcode-pa.googleapis.com` → `127.0.0.1`
-3. Menjalankan **MITM proxy server** di port **443** (butuh sudo)
-4. Antigravity IDE yang asli tetap connect ke domain yang sama tapi traffic-nya di-intercept
-5. 9router meneruskan request ke salah satu akun Antigravity yang terdaftar (round-robin/quota-based)
-
-### Prasyarat
-
-- 9router sudah running (✅ sdh jalan)
-- Akun Antigravity sudah didaftarkan di 9router (✅ 17 akun sdh)
-- **sudo password** (untuk DNS entry + port 443)
-
-### Langkah Setup
-
-#### 1. Generate Root CA Certificate
-
-```bash
-# Otomatis dilakukan oleh MITM server saat pertama kali start
-# Certificate disimpan di:
-ls -la ~/.9router/mitm/
-# rootCA.key + rootCA.crt
-```
-
-#### 2. Start MITM Server
-
-Via Dashboard:
-- Buka http://localhost:20128
-- Pilih menu **CLI Tools** → **Antigravity**
-- Klik "Start MITM Server"
-- Masukkan sudo password jika diminta
-- Pilih API Key 9router
-
-Atau via API:
-
-```bash
-# Cek status MITM
-curl http://localhost:20128/api/cli-tools/antigravity-mitm \
-  -H "x-cli-token: $(python3 -c "import hashlib; jwt=open('~/.9router/jwt-secret').read().strip(); cli=open('~/.9router/auth/cli-secret').read().strip(); print(hashlib.sha256(f'{jwt}:{cli}'.encode()).hexdigest())")"
-
-# Start MITM
-curl -X POST http://localhost:20128/api/cli-tools/antigravity-mitm \
-  -H "x-cli-token: $(...)" \
-  -H "Content-Type: application/json" \
-  -d '{"apiKey":"sk-***","sudoPassword":"***","action":"start"}'
-```
-
-#### 3. Trust the Certificate
-
-Install rootCA.crt ke sistem trust store:
-
-```bash
-# Linux
-sudo cp ~/.9router/mitm/rootCA.crt /usr/local/share/ca-certificates/9router-mitm.crt
-sudo update-ca-certificates
-
-# Atau trust secara interaktif via dashboard
-```
-
-#### 4. Verify MITM Active
-
-- DNS entry aktif: `daily-cloudcode-pa.googleapis.com` → `127.0.0.1`
-- Port 443 listening: `sudo lsof -i :443`
-- Antigravity IDE bisa connect dan request diarahkan ke 9router
-
-## 🔄 Model Aliases
-
-Saat request dari Antigravity di-intercept, model name diremapping:
-
-| Original Model | 9router Alias |
-|---------------|---------------|
-| gemini-default | gemini-3.5-flash-low |
-| gemini-3.5-flash-high | gemini-3-flash-agent |
-| gemini-3.5-flash-medium | gemini-3.5-flash-low |
-| gemini-3.5-flash-extra-low | gemini-3.5-flash-extra-low |
-| gemini-3.1-pro-high | gemini-pro-agent |
-| gemini-3-pro-high | gemini-pro-agent |
-| gemini-3-pro-low | gemini-3.1-pro-low |
-
-## 📦 Daftar Akun Antigravity
-
-| # | Email | Auth | Active | Created |
-|---|-------|------|--------|---------|
-| 1 | <email> | oauth | ❌ | 2026-06-26 |
-| 2 | <email> | oauth | ✅ | 2026-07-01 |
-| 3-17 | user1-15@example.com | oauth | ✅ | 2026-07-02 |
-
-## 🛠 Troubleshooting
-
-**MITM server can't start - port 443 busy**
-```bash
-# Cek apa yang pakai port 443
-sudo lsof -i :443
-# Jika dipakai service lain, stop dulu
-sudo systemctl stop nginx  # atau apache/caddy dll
-```
-
-**DNS entry tidak terdaftar**
-```bash
-# Cek /etc/hosts
-grep "daily-cloudcode-pa" /etc/hosts
-# Harusnya ada: 127.0.0.1 daily-cloudcode-pa.googleapis.com
-```
-
-**Certificate tidak trusted**
-```bash
-# Cek apakah cert terinstall
-openssl verify ~/.9router/mitm/rootCA.crt
-# Install ulang jika perlu
-```
+> ⚠️ **Etika & ToS:** Tool ini mengotomatiskan login OAuth untuk akun yang kamu punya kredensialnya, ke 9router milikmu sendiri. Otomatisasi login Google beruntun berisiko di-challenge/diblokir Google — gunakan dengan jeda yang wajar. Hormati Terms of Service pihak terkait.
 
 ---
 
-## 🌐 Remote VPS Usage (Universal Config)
+## Isi
 
-Bot sekarang bisa konek ke 9router di mana saja (host/proto/port configurable) dan jalan **local** atau **remote**.
+- [Apa yang dilakukan](#apa-yang-dilakukan)
+- [Command](#command)
+- [Mode: local vs remote](#mode-local-vs-remote)
+- [Prasyarat](#prasyarat)
+- [Install](#install)
+- [Setup Linux](#setup-linux)
+- [Setup Windows](#setup-windows)
+- [Config](#config)
+- [Contoh pakai](#contoh-pakai)
+- [Keamanan](#keamanan)
+- [Test](#test)
+- [Troubleshooting](#troubleshooting)
 
-### Mode
-- `auto` (default): `local` kalau `~/.9router/machine-id` ada & host=localhost; selain itu `remote`.
-- `local`: CLI token + SQLite langsung (perlu jalan di mesin 9router).
-- `remote`: dashboard password → session cookie + HTTPS API (bisa dari mesin manapun).
+---
 
-### Config sources (prioritas): flag CLI > env var > config.json > default
+## Apa yang dilakukan
 
-Contoh `config.json` (lihat `config.example.json`):
+Untuk satu akun Google (punya email + password), bot akan:
+
+1. Meminta *authorization URL* OAuth Antigravity dari 9router.
+2. Membuka Chromium, login Google otomatis (email → password → consent/TOS).
+3. Menangkap `code` OAuth dari redirect callback.
+4. Menukar `code` tersebut dengan token di 9router (`/api/oauth/antigravity/exchange`).
+5. Akun terdaftar sebagai provider connection di 9router.
+
+Tersedia juga operasi baca/hapus (`inspect`, `delete`) baik via SQLite lokal maupun via API remote.
+
+---
+
+## Command
+
+```
+node bot.js browser <email> <password> [flags]     # daftarkan 1 akun via OAuth
+node bot.js browser <accounts.json> [flags]        # batch dari file JSON
+node bot.js inspect [flags]                        # lihat akun Antigravity terdaftar
+node bot.js delete <id> [flags]                    # hapus akun berdasarkan ID
+node bot.js inject --email <e> --access-token <t>  # inject token mentah (LOCAL only)
+```
+
+`accounts.json` berformat array:
+
 ```json
-{ "host": "<your-9router-host>", "proto": "https", "port": 443, "mode": "remote", "password": "<dashboard-password>" }
+[
+  { "email": "user1@example.com", "password": "theirpassword" },
+  { "email": "user2@example.com", "password": "theirpassword" }
+]
 ```
-
-### Contoh remote (VPS HTTPS)
-```bash
-node bot.js inspect --host <your-9router-host> --proto https --password '<dashboard-password>'
-node bot.js browser user@gmail.com 'gpw' --host <your-9router-host> --proto https --password '<dashboard-password>'
-```
-
-### Catatan
-- `inject` tidak tersedia di remote (pakai `browser`).
-- TLS diverifikasi penuh. Untuk self-signed cert, set `NODE_EXTRA_CA_CERTS=/path/to/rootCA.pem` (jangan disable verification).
 
 ---
 
-Dibuat: 2026-07-02
+## Mode: local vs remote
+
+| | Local | Remote |
+|---|---|---|
+| Bot jalan di | mesin yang sama dengan 9router | manapun (laptop, server lain) |
+| Auth ke 9router | CLI token (dari `~/.9router/machine-id` + `cli-secret`) | dashboard password → session cookie |
+| Akses data | SQLite langsung (`~/.9router/db/data.sqlite`) | HTTPS API (`/api/providers`) |
+| `browser` | ✅ | ✅ |
+| `inspect` / `delete` | ✅ | ✅ |
+| `inject` | ✅ | ⛔ diblokir (pakai `browser`) |
+
+Mode diatur via `--mode auto|local|remote`. Default `auto`: **local** kalau `~/.9router/machine-id` ada **dan** host = localhost; selain itu **remote**.
+
+**Catatan OAuth (remote):** redirect_uri yang terdaftar di Google adalah `http://localhost:20128/callback` (fixed), terpisah dari host API. Saat mode remote, browser akan redirect ke `localhost` lokal kamu — ini aman karena PKCE: hanya bot yang memegang `code_verifier`, sehingga instance 9router lokal tidak bisa mengonsumsi code tersebut; bot menangkapnya lalu menukar di host target.
+
+---
+
+## Prasyarat
+
+- **Node.js 18+** (untuk `node:test` bawaan).
+- **Browser Chromium/Chrome/Edge** (bot memakai Puppeteer, `headless: false` — window akan terbuka).
+- **Mode local:** 9router terpasang di mesin yang sama (`~/.9router/`).
+- **Mode remote:** akses ke host 9router (HTTPS) + dashboard password.
+
+---
+
+## Install
+
+```bash
+git clone git@github.com:elzanom/9router-agy.git
+cd 9router-agy
+npm install
+```
+
+Tidak ada dependency runtime baru selain yang sudah ada (`puppeteer-core`, `puppeteer-extra`, `puppeteer-extra-plugin-stealth`, `sqlite3`).
+
+---
+
+## Setup Linux
+
+1. Pastikan Chromium terpasang (mis. `/usr/bin/chromium`). Cek: `which chromium`.
+2. **Remote (paling umum):** salin contoh config lalu edit:
+   ```bash
+   cp config.example.json config.json
+   $EDITOR config.json   # isi host, password dashboard, chromiumPath bila perlu
+   ```
+3. **(Opsional) Local:** pastikan 9router jalan di `localhost:20128` dan `~/.9router/machine-id` ada. Tanpa flag, mode otomatis `local`.
+4. Tes: `node bot.js inspect`
+
+---
+
+## Setup Windows
+
+1. Install [Node.js 18+](https://nodejs.org/) (centang "Add to PATH").
+2. `git clone` lalu `npm install` di folder proyek (pakai Git Bash / PowerShell / CMD).
+3. Path Chromium default (`/usr/bin/chromium`) tidak ada di Windows — **set `chromiumPath`** di `config.json` ke path Chrome/Edge kamu, contoh:
+   ```json
+   {
+     "host": "<your-9router-host>",
+     "proto": "https",
+     "mode": "remote",
+     "password": "<your-dashboard-password>",
+     "chromiumPath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+   }
+   ```
+   Path Edge: `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`.
+   (Tanda `\` harus dobel `\\` dalam JSON.)
+4. Jalankan dari folder proyek:
+   ```powershell
+   node bot.js inspect
+   ```
+5. **Mode local di Windows:** hanya berlaku jika 9router terpasang di mesin yang sama dengan struktur path `%USERPROFILE%\.9router\...` (logika path memakai `os.homedir()`, jadi cross-platform). Untuk sekadar mendaftar ke 9router di tempat lain, pakai mode remote (tidak butuh 9router lokal).
+
+> Tips cross-platform: taruh semua konfigurasi di `config.json` agar terhindar dari perbedaan quoting shell (cmd vs PowerShell vs bash), terutama untuk password.
+
+---
+
+## Config
+
+Prioritas (yang pertama menang): **flag CLI → env var → `config.json` → default**.
+
+| Field | Flag | Env | Default | Wajib |
+|-------|------|-----|---------|-------|
+| `host` | `--host` | `NINEROUTER_HOST` | `localhost` | ya |
+| `proto` | `--proto` | `NINEROUTER_PROTO` | `http` | — |
+| `port` | `--port` | `NINEROUTER_PORT` | `20128` (`443` untuk https) | — |
+| `mode` | `--mode` | `NINEROUTER_MODE` | `auto` | — |
+| `password` | `--password` | `NINEROUTER_PASSWORD` | — | remote |
+| `chromiumPath` | `--chromium` | `NINEROUTER_CHROMIUM` | `/usr/bin/chromium` | — |
+| `oauthCallbackUrl` | `--oauth-callback-url` | `NINEROUTER_OAUTH_CALLBACK_URL` | `http://localhost:20128/callback` | — |
+
+File `config.json` dicari di cwd dulu, lalu `~/.9router-agy/config.json`.
+
+---
+
+## Contoh pakai
+
+```bash
+# Remote via HTTPS (VPS) — pakai config.json:
+node bot.js inspect
+node bot.js browser user@example.com 'theirpassword'
+
+# Remote via flag:
+node bot.js inspect --host <your-9router-host> --proto https --password '<dashboard-password>'
+
+# Batch dari file:
+node bot.js browser accounts.json
+
+# Local (di mesin 9router, tanpa flag):
+node bot.js inspect
+node bot.js browser user@example.com 'theirpassword'
+
+# Hapus akun:
+node bot.js delete <id>
+```
+
+---
+
+## Keamanan
+
+- **`config.json`, `batch-accounts.json`, `*.zip`, `node_modules/` di-gitignore** — kredensial tidak ikut ter-commit. Jangan commit password asli.
+- **TLS selalu aktif.** Tidak ada opsi menonaktifkan verifikasi TLS. Untuk sertifikat self-signed, set env `NODE_EXTRA_CA_CERTS=/path/to/rootCA.pem` (percaya satu CA spesifik), bukan mematikan verifikasi.
+- **Guard password cleartext:** mode `remote` + `proto=http` + host non-localhost akan ditolak (mencegah password dashboard dikirim plaintext). Gunakan `--proto https` untuk remote.
+- Password akun Google tidak di-log; hanya email yang tampil di log proses.
+
+---
+
+## Test
+
+Unit test memakai runner bawaan (`node:test`), tanpa dependency tambahan:
+
+```bash
+npm test
+# atau: node --test
+```
+
+Mencakup `http-client`, `config` (rantai prioritas, mode, guard), dan `auth` (cliToken, dashboardSession).
+
+---
+
+## Troubleshooting
+
+- **`redirect_uri_mismatch`** — redirect_uri OAuth harus persis `http://localhost:20128/callback` (terdaftar di Google). Jangan diubah ke host koneksi kecuali kamu tahu itu juga terdaftar di Google. Atur via `oauthCallbackUrl` bila perlu.
+- **`Dashboard login failed (HTTP 401)`** — password dashboard salah.
+- **Google CAPTCHA / challenge** — login otomatis beruntun memicu challenge. Bot menycreenshot ke `/tmp` (Linux) atau `%TEMP%` (Windows) lalu berhenti; lanjutkan manual atau beri jeda antar akun.
+- **`Execution context was destroyed`** — race Puppeteer saat halaman TOS/consent (jarang, transient). Coba ulang akun tersebut.
+- **Port salah** — kalau tunnel VPS memakai port lain, tambahkan `--port` (mis. `--port 443`).
+- **Browser tidak terbuka (Windows)** — cek `chromiumPath` di `config.json` mengarah ke Chrome/Edge yang ada.
+
+---
+
+## Struktur proyek
+
+```
+bot.js                 # entry CLI + automasi Google OAuth (puppeteer)
+config.js              # loadConfig (rantai prioritas, mode, validasi)
+auth.js                # cliToken + dashboardSession
+http-client.js         # request() proto-aware (http/https)
+scripts/probe-api.js   # util cek endpoint 9router
+tests/                 # unit test (node:test)
+config.example.json    # template config
+```
+
+## Lisensi
+
+Personal project. Gunakan secara bertanggung jawab dan sesuai ToS pihak terkait.

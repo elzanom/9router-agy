@@ -67,13 +67,13 @@ test("remote without password throws in non-interactive", async () => {
 
 test("remote + http + non-localhost throws (cleartext password guard)", async () => {
   await assert.rejects(
-    () => loadConfig(["--mode", "remote", "--host", "<your-9router-host>", "--proto", "http", "--password", "p"], { interactive: false }),
+    () => loadConfig(["--mode", "remote", "--host", "example.com", "--proto", "http", "--password", "p"], { interactive: false }),
     /cleartext/i
   );
 });
 
 test("remote + https + non-localhost + password resolves (the intended case)", async () => {
-  const cfg = await loadConfig(["--mode", "remote", "--host", "<your-9router-host>", "--proto", "https", "--password", "p"], { interactive: false });
+  const cfg = await loadConfig(["--mode", "remote", "--host", "example.com", "--proto", "https", "--password", "p"], { interactive: false });
   assert.equal(cfg.mode, "remote");
   assert.equal(cfg.proto, "https");
   assert.equal(cfg.port, 443);
