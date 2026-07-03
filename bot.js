@@ -331,16 +331,28 @@ async function automateGoogleLogin(config, email, password) {
           break;
         }
 
-        // Get all buttons on the page
-        const buttons = await page.evaluate(() => {
-          return Array.from(
-            document.querySelectorAll(
-              'button, div[role="button"], a[role="button"]',
-            ),
-          )
-            .map((b) => b.innerText.trim())
-            .filter((t) => t.length > 0 && t.length < 50);
-        });
+        // Get all buttons on the page. A button click on the previous iteration
+        // triggers a Google navigation; this evaluate can then run against a
+        // destroyed execution context. Recover by waiting for the page to settle
+        // and retrying the loop (it re-checks the callback URL next iteration).
+        let buttons = [];
+        try {
+          buttons = await page.evaluate(() => {
+            return Array.from(
+              document.querySelectorAll(
+                'button, div[role="button"], a[role="button"]',
+              ),
+            )
+              .map((b) => b.innerText.trim())
+              .filter((t) => t.length > 0 && t.length < 50);
+          });
+        } catch (e) {
+          if (/Execution context|Target closed|Session closed|navigation/i.test(e.message)) {
+            await new Promise((r) => setTimeout(r, 1500));
+            continue;
+          }
+          throw e;
+        }
 
         const actions = [];
 
@@ -428,20 +440,29 @@ async function automateGoogleLogin(config, email, password) {
             await new Promise((r) => setTimeout(r, 1000));
           }
 
-          // Try to scroll the TOS content if needed
-          await page.evaluate(() => {
-            const scrollContainer = document.querySelector(
-              '.terms-scroll, [role="document"], .tos-scroll, .signed-out, main, article, section, div[jsname], div[jscontroller]',
-            );
-            if (
-              scrollContainer &&
-              typeof scrollContainer.scrollHeight === "number"
-            ) {
-              scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          // Try to scroll the TOS content if needed. Guard against a
+          // mid-navigation state where document.body is null, and ignore
+          // transient execution-context errors (the Accept click below retries).
+          try {
+            await page.evaluate(() => {
+              if (!document || !document.body) return;
+              const scrollContainer = document.querySelector(
+                '.terms-scroll, [role="document"], .tos-scroll, .signed-out, main, article, section, div[jsname], div[jscontroller]',
+              );
+              if (
+                scrollContainer &&
+                typeof scrollContainer.scrollHeight === "number"
+              ) {
+                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+              }
+              // Always scroll window too
+              window.scrollTo(0, document.body.scrollHeight);
+            });
+          } catch (e) {
+            if (!/Execution context|Target closed|Session closed|navigation/i.test(e.message)) {
+              throw e;
             }
-            // Always scroll window too
-            window.scrollTo(0, document.body.scrollHeight);
-          });
+          }
           await new Promise((r) => setTimeout(r, 2000));
 
           const tosClicked = await page.evaluate(() => {
@@ -497,6 +518,9 @@ async function automateGoogleLogin(config, email, password) {
 
         if (actions.length > 0) {
           console.log(`[${email}]    ${actions.join(", ")}`);
+          // A button click triggers a Google navigation. Give it time to settle
+          // so the next iteration's page reads don't hit a destroyed context.
+          await new Promise((r) => setTimeout(r, 2500));
         }
 
         if (
