@@ -51,7 +51,7 @@ async function apiCall(config, method, reqPath, body = null) {
   return parsed;
 }
 
-function callbackUrl(config) {
+function buildCallbackUrl(config) {
   return `${config.proto === "https" ? "https" : "http"}://${config.host}${config.port === 443 && config.proto === "https" ? "" : ":" + config.port}${config.callbackPath}`;
 }
 
@@ -67,7 +67,7 @@ async function getAuthorizeUrl(config) {
   return apiCall(
     config,
     "GET",
-    `/api/oauth/antigravity/authorize?redirect_uri=${encodeURIComponent(callbackUrl(config))}`,
+    `/api/oauth/antigravity/authorize?redirect_uri=${encodeURIComponent(buildCallbackUrl(config))}`,
   );
 }
 
@@ -600,7 +600,7 @@ async function automateGoogleLogin(config, email, password) {
 
       const result = await exchangeOAuthCode(config, {
         code,
-        redirectUri: callbackUrl(config),
+        redirectUri: buildCallbackUrl(config),
         codeVerifier: authData.codeVerifier,
         state: state || authData.state,
       });
