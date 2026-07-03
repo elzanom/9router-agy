@@ -24,80 +24,35 @@ const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const puppeteerExtra = addExtra(puppeteer);
 puppeteerExtra.use(StealthPlugin());
 const crypto = require("crypto");
-const http = require("http");
 const sqlite3 = require("sqlite3");
 const path = require("path");
 const fs = require("fs");
-const os = require("os");
 
-// ============================================================
-// CONFIG
-// ============================================================
-const CONFIG = {
-  host: "<your-9router-host>",
-  port: 20128,
-  proto: "http",
-  callbackPath: "/callback",
-  dbPath: path.join(os.homedir(), ".9router", "db", "data.sqlite"),
-  machineId: fs
-    .readFileSync(path.join(os.homedir(), ".9router", "machine-id"), "utf8")
-    .trim(),
-  cliSecret: fs
-    .readFileSync(
-      path.join(os.homedir(), ".9router", "auth", "cli-secret"),
-      "utf8",
-    )
-    .trim(),
-  chromiumPath: "/usr/bin/chromium",
-};
-
-// ============================================================
-// CLI TOKEN
-// ============================================================
-function getCliToken() {
-  const hash = crypto
-    .createHash("sha256")
-    .update(CONFIG.machineId + "9r-cli-auth" + CONFIG.cliSecret)
-    .digest("hex")
-    .substring(0, 16);
-  return hash;
-}
+const { loadConfig, parseCliFlags } = require("./config");
+const { resolveAuthHeaders } = require("./auth");
+const { request } = require("./http-client");
 
 // ============================================================
 // 9ROUTER API
 // ============================================================
-function apiCall(method, path, body = null) {
-  return new Promise((resolve, reject) => {
-    const opts = {
-      hostname: CONFIG.host,
-      port: CONFIG.port,
-      path,
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        "x-9r-cli-token": getCliToken(),
-      },
-    };
-    const req = http.request(opts, (res) => {
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => {
-        try {
-          const parsed = JSON.parse(data);
-          if (res.statusCode >= 400) {
-            reject(new Error(parsed.error || `HTTP ${res.statusCode}`));
-          } else {
-            resolve(parsed);
-          }
-        } catch (e) {
-          reject(new Error(`Parse error: ${e.message}`));
-        }
-      });
-    });
-    req.on("error", reject);
-    if (body) req.write(JSON.stringify(body));
-    req.end();
-  });
+async function apiCall(config, method, reqPath, body = null) {
+  const headers = await resolveAuthHeaders(config);
+  const res = await request(config, { method, path: reqPath, body, headers });
+  let parsed;
+  try {
+    parsed = JSON.parse(res.body);
+  } catch {
+    parsed = res.body;
+  }
+  if (res.statusCode >= 400) {
+    const msg = parsed && parsed.error ? parsed.error : `HTTP ${res.statusCode}`;
+    throw new Error(`${msg} (at ${method} ${reqPath})`);
+  }
+  return parsed;
+}
+
+function callbackUrl(config) {
+  return `${config.proto === "https" ? "https" : "http"}://${config.host}${config.port === 443 && config.proto === "https" ? "" : ":" + config.port}${config.callbackPath}`;
 }
 
 function safePageUrl(page) {
@@ -108,19 +63,16 @@ function safePageUrl(page) {
   }
 }
 
-async function getAuthorizeUrl() {
-  const result = await apiCall(
+async function getAuthorizeUrl(config) {
+  return apiCall(
+    config,
     "GET",
-    `/api/oauth/antigravity/authorize?redirect_uri=${encodeURIComponent(`http://${CONFIG.host}:${CONFIG.port}${CONFIG.callbackPath}`)}`,
+    `/api/oauth/antigravity/authorize?redirect_uri=${encodeURIComponent(callbackUrl(config))}`,
   );
-  return result;
 }
 
-async function exchangeOAuthCode(
-  provider,
-  { code, redirectUri, codeVerifier, state },
-) {
-  return apiCall("POST", `/api/oauth/${provider}/exchange`, {
+async function exchangeOAuthCode(config, { code, redirectUri, codeVerifier, state }) {
+  return apiCall(config, "POST", "/api/oauth/antigravity/exchange", {
     code,
     redirectUri,
     codeVerifier,
@@ -131,59 +83,39 @@ async function exchangeOAuthCode(
 // ============================================================
 // DATABASE HELPERS
 // ============================================================
-function openDb() {
+function openDb(config) {
   return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(CONFIG.dbPath, (err) => {
-      if (err) reject(err);
-      else resolve(db);
-    });
+    const db = new sqlite3.Database(config.dbPath, (err) => (err ? reject(err) : resolve(db)));
   });
 }
 
-async function listAccounts() {
-  const db = await openDb();
+async function listAccounts(config) {
+  const db = await openDb(config);
   return new Promise((resolve, reject) => {
     db.all(
       `SELECT id, name, email, provider, isActive, data, createdAt, updatedAt
-       FROM providerConnections
-       WHERE provider = 'antigravity'
-       ORDER BY createdAt DESC`,
+       FROM providerConnections WHERE provider = 'antigravity' ORDER BY createdAt DESC`,
       (err, rows) => {
         db.close();
         if (err) reject(err);
-        else
-          resolve(
-            rows.map((r) => ({
-              ...r,
-              parsedData: r.data ? JSON.parse(r.data) : null,
-            })),
-          );
+        else resolve(rows.map((r) => ({ ...r, parsedData: r.data ? JSON.parse(r.data) : null })));
       },
     );
   });
 }
 
-async function injectToken({
-  email,
-  name,
-  accessToken,
-  refreshToken,
-  expiresIn,
-}) {
-  const db = await openDb();
+async function injectToken(config, { email, name, accessToken, refreshToken, expiresIn }) {
+  const db = await openDb(config);
 
-  // Generate project ID dari email
   const projectId = `agy-${email
     .split("@")[0]
     .replace(/[^a-z0-9]/gi, "-")
     .toLowerCase()}`;
 
-  // Calculate expiry
   const expiresInSec = expiresIn || 3599;
   const now = new Date();
   const expiresAt = new Date(now.getTime() + expiresInSec * 1000);
 
-  // Build data JSON
   const data = {
     accessToken,
     refreshToken,
@@ -216,36 +148,32 @@ async function injectToken({
   });
 }
 
-async function deleteAccount(id) {
-  const db = await openDb();
+async function deleteAccount(config, id) {
+  const db = await openDb(config);
   return new Promise((resolve, reject) => {
-    db.run(
-      "DELETE FROM providerConnections WHERE id = ?",
-      [id],
-      function (err) {
-        db.close();
-        if (err) reject(err);
-        else resolve({ deleted: this.changes });
-      },
-    );
+    db.run("DELETE FROM providerConnections WHERE id = ?", [id], function (err) {
+      db.close();
+      if (err) reject(err);
+      else resolve({ deleted: this.changes });
+    });
   });
 }
 
 // ============================================================
 // BROWSER AUTOMATION
 // ============================================================
-async function automateGoogleLogin(email, password) {
+async function automateGoogleLogin(config, email, password) {
   console.log(`\n[${email}] Memulai OAuth flow...`);
 
   // Step 1: Get authorization URL
   console.log(`[${email}] 1/5 Mendapatkan authorization URL...`);
-  const authData = await getAuthorizeUrl();
+  const authData = await getAuthorizeUrl(config);
   console.log(`[${email}]    Auth URL didapat`);
 
   // Step 2: Launch browser
   console.log(`[${email}] 2/5 Membuka browser...`);
   const browser = await puppeteerExtra.launch({
-    executablePath: CONFIG.chromiumPath,
+    executablePath: config.chromiumPath,
     headless: false, // Biar kelihatan — kalau mau headless ganti jadi 'new' / true
     args: [
       "--no-sandbox",
@@ -670,9 +598,9 @@ async function automateGoogleLogin(email, password) {
       // Step 6: Exchange code for tokens
       console.log(`[${email}] 5/5 Exchange OAuth code...`);
 
-      const result = await exchangeOAuthCode("antigravity", {
+      const result = await exchangeOAuthCode(config, {
         code,
-        redirectUri: `http://${CONFIG.host}:${CONFIG.port}${CONFIG.callbackPath}`,
+        redirectUri: callbackUrl(config),
         codeVerifier: authData.codeVerifier,
         state: state || authData.state,
       });
@@ -699,9 +627,9 @@ async function automateGoogleLogin(email, password) {
 // ============================================================
 // INSPECT
 // ============================================================
-async function inspect() {
+async function inspect(config) {
   console.log("\n=== AKUN ANTIGRAVITY TERDAFTAR ===\n");
-  const accounts = await listAccounts();
+  const accounts = await listAccounts(config);
 
   if (accounts.length === 0) {
     console.log("Belum ada akun Antigravity terdaftar.");
@@ -735,7 +663,7 @@ async function inspect() {
 // ============================================================
 // INTERACTIVE — Masukkan dari file atau manual
 // ============================================================
-async function batchFromFile(filePath) {
+async function batchFromFile(config, filePath) {
   const content = fs.readFileSync(filePath, "utf8");
   const accounts = JSON.parse(content);
 
@@ -756,7 +684,7 @@ async function batchFromFile(filePath) {
     console.log(`${"=".repeat(50)}`);
 
     try {
-      await automateGoogleLogin(email, password);
+      await automateGoogleLogin(config, email, password);
       success++;
     } catch (err) {
       console.error(`Gagal: ${err.message}`);
@@ -780,92 +708,97 @@ async function batchFromFile(filePath) {
 // ============================================================
 // CLI
 // ============================================================
+async function deleteAccountCmd(config, id) {
+  if (config.mode === "remote") {
+    console.log("delete remote: implemented in Task 5");
+    return;
+  }
+  const result = await deleteAccount(config, id);
+  console.log(`✅ Deleted: ${result.deleted} account(s)`);
+}
+
 async function main() {
-  const args = process.argv.slice(2);
-  const command = args[0];
+  const argv = process.argv.slice(2);
+  const { positional, flags } = parseCliFlags(argv);
+  const command = positional[0];
 
   if (!command) {
     console.log(`
-9router Agy Bot — Automasi OAuth Antigravity
+9router Agy Bot — Universal Edition
 
 Usage:
-  node bot.js browser <email> <password>              # Login 1 akun via browser
-  node bot.js browser <file.json>                     # Batch dari file
-  node bot.js inject --email <e> --access-token <t>   # Inject token ke DB
-  node bot.js inject --email <e> --refresh-token <t>  # Inject refresh token
-  node bot.js inspect                                  # Lihat akun terdaftar
-  node bot.js list-accounts                           # Lihat detail akun
-  node bot.js delete <id>                             # Hapus akun
+  node bot.js browser <email> <password> [flags]      # Login 1 akun via OAuth
+  node bot.js browser <file.json> [flags]             # Batch dari file
+  node bot.js inject --email <e> --access-token <t>   # Inject token (local mode only)
+  node bot.js inspect [flags]                         # Lihat akun terdaftar
+  node bot.js delete <id> [flags]                     # Hapus akun
+
+Config flags (CLI > env > config.json > default):
+  --host / NINEROUTER_HOST          default localhost
+  --proto http|https                default http
+  --port / NINEROUTER_PORT          default 20128 (https: 443)
+  --mode auto|local|remote          default auto
+  --password / NINEROUTER_PASSWORD  dashboard password (required in remote)
+  --chromium / NINEROUTER_CHROMIUM  default /usr/bin/chromium
+
+Examples:
+  # Remote HTTPS VPS:
+  node bot.js inspect --host <your-9router-host> --proto https --password '<dashboard-password>'
+  # Local (unchanged from before):
+  node bot.js inspect
 `);
     return;
   }
 
+  // Resolve config once; non-command flags (--email/--access-token for inject) stay in argv.
+  const config = await loadConfig(argv);
+
   switch (command) {
     case "browser": {
-      const arg2 = args[1];
-      const arg3 = args[2];
-
+      const arg2 = positional[1];
+      const arg3 = positional[2];
       if (arg2 && arg3) {
-        // Single account
-        await automateGoogleLogin(arg2, arg3);
+        await automateGoogleLogin(config, arg2, arg3);
       } else if (arg2 && fs.existsSync(arg2)) {
-        // Batch from file
-        await batchFromFile(arg2);
+        await batchFromFile(config, arg2);
       } else {
-        console.log("Usage: node bot.js browser <email> <password>");
-        console.log("   or: node bot.js browser <accounts.json>");
+        console.log("Usage: node bot.js browser <email> <password> | <accounts.json>");
       }
       break;
     }
-
     case "inject": {
-      // Parse --email, --access-token, --refresh-token
-      const email = args[args.indexOf("--email") + 1];
-      const accessToken = args[args.indexOf("--access-token") + 1];
-      const refreshToken = args[args.indexOf("--refresh-token") + 1];
-
+      const email = flags.email;
+      const accessToken = flags["access-token"];
+      const refreshToken = flags["refresh-token"];
       if (!email || (!accessToken && !refreshToken)) {
-        console.log(
-          "Usage: node bot.js inject --email <email> --access-token <token> [--refresh-token <token>]",
-        );
+        console.log("Usage: node bot.js inject --email <email> --access-token <token> [--refresh-token <token>]");
         return;
       }
-
-      const result = await injectToken({
-        email,
-        name: email,
-        accessToken,
-        refreshToken,
-        expiresIn: 3599,
-      });
-
-      console.log(
-        `✅ Token injected! ID: ${result.id}, Email: ${result.email}, Project: ${result.projectId}`,
-      );
-      console.log(`   Refresh akan expired dalam ~3599s, perlu autorefresh.`);
+      if (config.mode === "remote") {
+        console.log("inject tidak tersedia di remote mode (tidak ada endpoint API untuk token mentah). Gunakan: node bot.js browser <email> <password>");
+        return;
+      }
+      const result = await injectToken(config, { email, name: email, accessToken, refreshToken, expiresIn: 3599 });
+      console.log(`✅ Token injected! ID: ${result.id}, Email: ${result.email}, Project: ${result.projectId}`);
       break;
     }
-
     case "inspect":
     case "list":
     case "list-accounts":
-      await inspect();
+      await inspect(config);
       break;
-
     case "delete": {
-      const id = args[1];
+      const id = positional[1];
       if (!id) {
         console.log("Usage: node bot.js delete <id>");
         return;
       }
-      const result = await deleteAccount(id);
-      console.log(`✅ Deleted: ${result.deleted} account(s)`);
+      await deleteAccountCmd(config, id);
       break;
     }
-
     default:
       console.log(`Unknown command: ${command}`);
   }
 }
 
-main().catch(console.error);
+main().catch((e) => { console.error(`❌ ${e.message}`); process.exit(1); });
