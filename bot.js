@@ -25,7 +25,6 @@ const puppeteerExtra = addExtra(puppeteer);
 puppeteerExtra.use(StealthPlugin());
 const crypto = require("crypto");
 const sqlite3 = require("sqlite3");
-const path = require("path");
 const fs = require("fs");
 
 const { loadConfig, parseCliFlags } = require("./config");
