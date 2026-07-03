@@ -52,3 +52,25 @@ test("dashboardSession throws on HTTP error", async () => {
     server.close();
   }
 });
+
+test("dashboardSession truncates long error bodies in the message", async () => {
+  const longBody = "X".repeat(2000);
+  const server = http.createServer((req, res) => res.writeHead(500).end(longBody));
+  await new Promise((r) => server.listen(0, r));
+  const port = server.address().port;
+  try {
+    await assert.rejects(
+      () => dashboardSession({ host: "127.0.0.1", port, proto: "http", password: "pw" }),
+      (err) => {
+        assert.match(err.message, /500/);
+        assert.ok(
+          err.message.length < longBody.length,
+          "error message must be truncated, not the full body",
+        );
+        return true;
+      },
+    );
+  } finally {
+    server.close();
+  }
+});

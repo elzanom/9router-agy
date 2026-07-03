@@ -42,7 +42,12 @@ async function dashboardSession(config) {
     headers: { "Content-Type": "application/json" },
   });
   if (res.statusCode >= 400) {
-    throw new Error(`Dashboard login failed (HTTP ${res.statusCode}): ${res.body}`);
+    // Truncate the response body so a large/malformed error (e.g. an HTML error
+    // page) isn't dumped wholesale into the exception / terminal.
+    const bodySnippet = (res.body || "").slice(0, 200);
+    throw new Error(
+      `Dashboard login failed (HTTP ${res.statusCode}): ${bodySnippet}`,
+    );
   }
   const cookies = parseSetCookie(res.headers["set-cookie"]);
   if (!cookies.session) {
