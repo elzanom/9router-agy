@@ -154,4 +154,32 @@ openssl verify ~/.9router/mitm/rootCA.crt
 
 ---
 
+## 🌐 Remote VPS Usage (Universal Config)
+
+Bot sekarang bisa konek ke 9router di mana saja (host/proto/port configurable) dan jalan **local** atau **remote**.
+
+### Mode
+- `auto` (default): `local` kalau `~/.9router/machine-id` ada & host=localhost; selain itu `remote`.
+- `local`: CLI token + SQLite langsung (perlu jalan di mesin 9router).
+- `remote`: dashboard password → session cookie + HTTPS API (bisa dari mesin manapun).
+
+### Config sources (prioritas): flag CLI > env var > config.json > default
+
+Contoh `config.json` (lihat `config.example.json`):
+```json
+{ "host": "<your-9router-host>", "proto": "https", "port": 443, "mode": "remote", "password": "<dashboard-password>" }
+```
+
+### Contoh remote (VPS HTTPS)
+```bash
+node bot.js inspect --host <your-9router-host> --proto https --password '<dashboard-password>'
+node bot.js browser user@gmail.com 'gpw' --host <your-9router-host> --proto https --password '<dashboard-password>'
+```
+
+### Catatan
+- `inject` tidak tersedia di remote (pakai `browser`).
+- TLS diverifikasi penuh. Untuk self-signed cert, set `NODE_EXTRA_CA_CERTS=/path/to/rootCA.pem` (jangan disable verification).
+
+---
+
 Dibuat: 2026-07-02

@@ -1,0 +1,8 @@
+{
+  "host": "<your-9router-host>",
+  "proto": "https",
+  "port": 443,
+  "mode": "remote",
+  "password": "REPLACE_WITH_DASHBOARD_PASSWORD",
+  "chromiumPath": "/usr/bin/chromium"
+}

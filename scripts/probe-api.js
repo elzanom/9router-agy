@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Probe a running 9router to discover the real GET /api/provider-connections shape.
+ * Probe a running 9router to discover the real GET /api/providers shape.
  * Uses CLI-token auth (local) by default. Run on the 9router machine:
  *   node scripts/probe-api.js
  * Or against remote with dashboard auth:
