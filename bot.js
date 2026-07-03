@@ -50,8 +50,13 @@ async function apiCall(config, method, reqPath, body = null) {
   return parsed;
 }
 
+// The OAuth redirect_uri is Google's REGISTERED callback for the 9router client
+// (http://localhost:20128/callback) — NOT the API connection host. For remote
+// mode the browser redirects to localhost, which is harmless: only this flow
+// holds the PKCE code_verifier, so a local 9router can't exchange the code;
+// the bot captures it from the navigation and exchanges at the target host.
 function buildCallbackUrl(config) {
-  return `${config.proto === "https" ? "https" : "http"}://${config.host}${config.port === 443 && config.proto === "https" ? "" : ":" + config.port}${config.callbackPath}`;
+  return config.oauthCallbackUrl;
 }
 
 function safePageUrl(page) {

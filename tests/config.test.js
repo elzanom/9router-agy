@@ -1,9 +1,21 @@
 const test = require("node:test");
+const { before, after } = require("node:test");
 const assert = require("node:assert");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { loadConfig, parseCliFlags, resolveMode, isLocalHost, DEFAULTS } = require("../config");
+
+// Run all tests in an empty temp cwd so a developer's real config.json in the
+// project root doesn't leak into loadConfig() and change results.
+let savedCwd;
+before(() => {
+  savedCwd = process.cwd();
+  process.chdir(fs.mkdtempSync(path.join(os.tmpdir(), "cfg-test-")));
+});
+after(() => {
+  process.chdir(savedCwd);
+});
 
 test("parseCliFlags splits flags and positionals", () => {
   const { flags, positional } = parseCliFlags(["browser", "--host", "h", "email", "--port=9", "pass"]);
@@ -65,4 +77,9 @@ test("remote + https + non-localhost + password resolves (the intended case)", a
   assert.equal(cfg.mode, "remote");
   assert.equal(cfg.proto, "https");
   assert.equal(cfg.port, 443);
+});
+
+test("oauthCallbackUrl defaults to the Google-registered localhost callback", async () => {
+  const cfg = await loadConfig(["--mode", "local"], { interactive: false });
+  assert.equal(cfg.oauthCallbackUrl, "http://localhost:20128/callback");
 });

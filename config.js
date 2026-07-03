@@ -10,6 +10,9 @@ const DEFAULTS = {
   mode: "auto",
   chromiumPath: "/usr/bin/chromium",
   callbackPath: "/callback",
+  // OAuth redirect_uri REGISTERED with Google for the 9router client. This is
+  // fixed (localhost) and is NOT the API connection host — see buildCallbackUrl.
+  oauthCallbackUrl: "http://localhost:20128/callback",
 };
 
 function parseCliFlags(argv) {
@@ -96,6 +99,7 @@ async function loadConfig(argv = process.argv.slice(2), { interactive = process.
     mode: pick("mode", "NINEROUTER_MODE") || DEFAULTS.mode,
     chromiumPath: pick("chromium", "NINEROUTER_CHROMIUM") || DEFAULTS.chromiumPath,
     callbackPath: pick("callback-path", "NINEROUTER_CALLBACK_PATH") || DEFAULTS.callbackPath,
+    oauthCallbackUrl: pick("oauth-callback-url", "NINEROUTER_OAUTH_CALLBACK_URL") || DEFAULTS.oauthCallbackUrl,
     dbPath: pick("db-path", "NINEROUTER_DB_PATH") || path.join(home, ".9router", "db", "data.sqlite"),
     machineIdPath: pick("machine-id-path", "NINEROUTER_MACHINE_ID_PATH") || path.join(home, ".9router", "machine-id"),
     cliSecretPath: pick("cli-secret-path", "NINEROUTER_CLI_SECRET_PATH") || path.join(home, ".9router", "auth", "cli-secret"),
