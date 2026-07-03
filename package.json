@@ -1,0 +1,19 @@
+{
+  "name": "9router-agy",
+  "version": "1.0.0",
+  "description": "Setup dan konfigurasi **Antigravity (agy)** sebagai provider di **9router**.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "puppeteer-core": "^25.3.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "sqlite3": "^6.0.1"
+  }
+}
