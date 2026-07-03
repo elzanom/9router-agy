@@ -39,6 +39,22 @@ test("dashboardSession extracts session cookie from Set-Cookie", async () => {
   }
 });
 
+test("dashboardSession accepts an auth cookie by any name (e.g. auth_token)", async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "Set-Cookie": "auth_token=tok456; Path=/" });
+    res.end("{}");
+  });
+  await new Promise((r) => server.listen(0, r));
+  const port = server.address().port;
+  try {
+    const cookies = await dashboardSession({ host: "127.0.0.1", port, proto: "http", password: "pw" });
+    assert.equal(cookies.auth_token, "tok456");
+    assert.equal(cookies.session, undefined);
+  } finally {
+    server.close();
+  }
+});
+
 test("dashboardSession throws on HTTP error", async () => {
   const server = http.createServer((req, res) => res.writeHead(401).end("bad password"));
   await new Promise((r) => server.listen(0, r));

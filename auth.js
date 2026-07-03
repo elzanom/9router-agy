@@ -50,8 +50,11 @@ async function dashboardSession(config) {
     );
   }
   const cookies = parseSetCookie(res.headers["set-cookie"]);
-  if (!cookies.session) {
-    throw new Error("Dashboard login succeeded but no session cookie was returned");
+  // Accept whatever auth cookie the server sets — the real 9router uses
+  // "auth_token"; older/other builds may use "session". sessionHeaders sends
+  // all of them, so we only need to assert the login actually set something.
+  if (Object.keys(cookies).length === 0) {
+    throw new Error("Dashboard login succeeded but no auth cookie was returned");
   }
   return cookies;
 }
