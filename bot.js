@@ -625,11 +625,33 @@ async function automateGoogleLogin(config, email, password) {
 }
 
 // ============================================================
+// REMOTE HELPERS
+// ============================================================
+function safeParse(s) {
+  try {
+    return typeof s === "string" ? JSON.parse(s) : s;
+  } catch {
+    return null;
+  }
+}
+
+// Real endpoint: GET /api/providers → { connections: [...] }
+// Each antigravity item is FLAT (no nested `data` blob): top-level
+// { id, provider, authType, name, email, isActive, createdAt, updatedAt,
+//   testStatus, backoffLevel, errorCode, projectId, lastUsedAt, ... }
+async function listAccountsRemote(config) {
+  const data = await apiCall(config, "GET", "/api/providers");
+  const arr = Array.isArray(data) ? data : data.connections || data.data || data.items || [];
+  return arr.filter((c) => (c.provider || "").toLowerCase() === "antigravity");
+}
+
+// ============================================================
 // INSPECT
 // ============================================================
 async function inspect(config) {
-  console.log("\n=== AKUN ANTIGRAVITY TERDAFTAR ===\n");
-  const accounts = await listAccounts(config);
+  console.log(`\n=== AKUN ANTIGRAVITY TERDAFTAR [${config.mode}@${config.host}] ===\n`);
+  const accounts =
+    config.mode === "remote" ? await listAccountsRemote(config) : await listAccounts(config);
 
   if (accounts.length === 0) {
     console.log("Belum ada akun Antigravity terdaftar.");
@@ -639,23 +661,24 @@ async function inspect(config) {
   console.log(`Total: ${accounts.length} akun\n`);
 
   accounts.forEach((a, i) => {
-    const dp = a.parsedData;
-    const status = dp?.testStatus === "active" ? "✅" : "❌";
+    // Local rows: nested `data` JSON blob → parsedData. Remote items: flat fields.
+    const dp = a.parsedData || safeParse(a.data) || a;
+    const status = dp.testStatus === "active" || a.isActive ? "✅" : "❌";
     const email = a.email || a.name || "(no email)";
-    const created = new Date(a.createdAt).toLocaleString("id-ID");
-    const lastUsed = dp?.lastUsedAt
+    const created = a.createdAt ? new Date(a.createdAt).toLocaleString("id-ID") : "N/A";
+    const lastUsed = dp.lastUsedAt
       ? new Date(dp.lastUsedAt).toLocaleString("id-ID")
       : "N/A";
-    const backoff = dp?.backoffLevel || 0;
-    const errorCode = dp?.errorCode || "-";
+    const backoff = dp.backoffLevel || 0;
+    const errorCode = dp.errorCode || "-";
 
     console.log(`  ${i + 1}. ${status} ${email}`);
-    console.log(`     ID: ${a.id.substring(0, 8)}...`);
+    console.log(`     ID: ${String(a.id).substring(0, 8)}...`);
     console.log(`     Dibuat: ${created}`);
     console.log(`     Terakhir pakai: ${lastUsed}`);
     console.log(`     Backoff: ${backoff} | Error: ${errorCode}`);
     console.log(`     Status: ${a.isActive ? "Aktif" : "Nonaktif"}`);
-    if (dp?.projectId) console.log(`     Project: ${dp.projectId}`);
+    if (dp.projectId) console.log(`     Project: ${dp.projectId}`);
     console.log("");
   });
 }
@@ -710,7 +733,13 @@ async function batchFromFile(config, filePath) {
 // ============================================================
 async function deleteAccountCmd(config, id) {
   if (config.mode === "remote") {
-    console.log("delete remote: implemented in Task 5");
+    try {
+      await apiCall(config, "DELETE", `/api/providers/${encodeURIComponent(id)}`);
+      console.log(`✅ Deleted (remote): ${id}`);
+    } catch (e) {
+      console.log(`❌ Remote delete failed: ${e.message}`);
+      console.log("   If the endpoint differs, check 9router's API (e.g. POST /api/providers/delete with {id}).");
+    }
     return;
   }
   const result = await deleteAccount(config, id);
