@@ -104,6 +104,15 @@ async function loadConfig(argv = process.argv.slice(2), { interactive = process.
 
   cfg.mode = resolveMode(cfg.mode, cfg);
 
+  // Security guard: never send the dashboard password in cleartext over HTTP
+  // to a non-localhost host. Remote users must use HTTPS.
+  if (cfg.mode === "remote" && cfg.proto === "http" && !isLocalHost(cfg.host)) {
+    throw new Error(
+      `Refusing to send the dashboard password in cleartext over HTTP to non-localhost host "${cfg.host}". ` +
+        `Use --proto https for remote connections.`,
+    );
+  }
+
   const missing = [];
   if (cfg.mode === "remote" && !cfg.password) {
     missing.push({ key: "password", msg: "Dashboard password (required in remote mode)" });
