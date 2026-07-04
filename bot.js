@@ -550,6 +550,44 @@ async function automateGoogleLogin(config, email, password) {
         await new Promise((r) => setTimeout(r, 1000));
       }
 
+      // --- PRE-WARM: sneak a Cloud Console visit in a new tab so Google sees
+      // the account as "uses GCP" before 9router's onboardUser() fires. Shared
+      // browser context = cookies/identity carried over. All wrapped: pre-warm
+      // must never break the main OAuth flow.
+      try {
+        const warmPage = await browser.newPage();
+        await warmPage.setUserAgent(
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        );
+        await warmPage.evaluateOnNewDocument(() => {
+          Object.defineProperty(navigator, "webdriver", { get: () => false });
+        });
+        console.log(`[${email}]    Pre-warm: visiting console.cloud.google.com...`);
+        await warmPage.goto("https://console.cloud.google.com/", {
+          waitUntil: "domcontentloaded",
+          timeout: 15000,
+        });
+        // Try to click TOS / "Agree & continue" if present
+        await new Promise((r) => setTimeout(r, 2000));
+        await warmPage.evaluate(() => {
+          const labels = ["Agree & continue", "I agree", "Setuju", "Accept"];
+          const btns = Array.from(
+            document.querySelectorAll("button, a, div[role='button']"),
+          );
+          for (const t of labels) {
+            const b = btns.find((el) => el.innerText.trim() === t);
+            if (b) { b.click(); return true; }
+          }
+          return false;
+        }).catch(() => {});
+        // Brief visit is enough to register account activity with Google
+        await new Promise((r) => setTimeout(r, 3000));
+        await warmPage.close().catch(() => {});
+        console.log(`[${email}]    Pre-warm done`);
+      } catch (e) {
+        console.log(`[${email}]    Pre-warm skipped (${e.message.split('\n')[0]})`);
+      }
+
       // Step 5: Tunggu redirect ke callback (max 120s)
       console.log(
         `[${email}] 4/5 Menunggu redirect ke 9router callback (max 120s)...`,
